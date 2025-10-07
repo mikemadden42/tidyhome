@@ -1,68 +1,47 @@
 const std = @import("std");
-const fs = std.fs;
-const mem = std.mem;
 const print = std.debug.print;
-
-const MoveConfig = struct {
-    source_dir: []const u8 = ".",
-    dest_base_dir: []const u8 = "Documents",
-    ignore_extensions: []const []const u8 = &.{"9"},
-    verbose: bool = true,
-};
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const config = MoveConfig{};
-    try clean(allocator, config);
-}
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
 
-fn clean(allocator: std.mem.Allocator, config: MoveConfig) !void {
-    var current_dir = try fs.cwd().openDir(config.source_dir, .{ .iterate = true });
-    defer current_dir.close();
+    const source_dir = if (args.len > 1) args[1] else ".";
+    const dest_base = if (args.len > 2) args[2] else "Documents";
 
-    var iter = current_dir.iterate();
+    var dir = try std.fs.cwd().openDir(source_dir, .{ .iterate = true });
+    defer dir.close();
+
+    var iter = dir.iterate();
     while (try iter.next()) |entry| {
-        if (entry.kind != .file) continue;
-        if (!shouldMoveFile(entry.name, config)) continue;
+        if (entry.kind != .file or entry.name[0] == '.') continue;
 
-        try moveFile(allocator, entry.name, config);
-    }
-}
+        const ext = std.fs.path.extension(entry.name);
+        if (ext.len <= 1) continue;
 
-fn shouldMoveFile(file_name: []const u8, config: MoveConfig) bool {
-    if (file_name[0] == '.') return false;
-    const ext = fs.path.extension(file_name);
-    if (ext.len == 0) return false;
+        const ext_name = ext[1..];
 
-    for (config.ignore_extensions) |ignore_ext| {
-        if (mem.eql(u8, ext[1..], ignore_ext)) return false;
-    }
-    return true;
-}
+        // Create destination directory
+        const dest_dir = try std.fs.path.join(allocator, &.{ dest_base, ext_name });
+        defer allocator.free(dest_dir);
 
-fn moveFile(allocator: std.mem.Allocator, file_name: []const u8, config: MoveConfig) !void {
-    const ext = fs.path.extension(file_name);
-    const ext_no_dot = if (ext[0] == '.') ext[1..] else ext;
+        try std.fs.cwd().makePath(dest_dir);
 
-    const dest_dir = try fs.path.join(allocator, &.{ config.dest_base_dir, ext_no_dot });
-    defer allocator.free(dest_dir);
+        // Create full destination path
+        const dest_path = try std.fs.path.join(allocator, &.{ dest_dir, entry.name });
+        defer allocator.free(dest_path);
 
-    try fs.cwd().makePath(dest_dir);
-
-    const dest_path = try fs.path.join(allocator, &.{ dest_dir, file_name });
-    defer allocator.free(dest_path);
-
-    if (fs.cwd().access(dest_path, .{})) {
-        if (config.verbose) {
-            print("File {s} already exists in {s}\n", .{ file_name, dest_dir });
-        }
-    } else |_| {
-        try fs.cwd().rename(file_name, dest_path);
-        if (config.verbose) {
-            print("Moved {s} to {s}\n", .{ file_name, dest_dir });
+        // Check if file already exists at destination
+        if (std.fs.cwd().access(dest_path, .{})) {
+            print("File {s} already exists in {s}\n", .{ entry.name, dest_dir });
+            continue; // Skip this file
+        } else |_| {
+            // File doesn't exist, safe to move
+            try std.fs.cwd().rename(entry.name, dest_path);
+            print("Moved {s} to {s}\n", .{ entry.name, dest_dir });
         }
     }
 }
