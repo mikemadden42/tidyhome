@@ -4,10 +4,15 @@ const print = std.debug.print;
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
 
+    // 1. Set up the Arena Allocator
+    var arena = std.heap.ArenaAllocator.init(gpa.allocator());
+    defer arena.deinit(); // This one line handles ALL cleanup at the end
+    const allocator = arena.allocator();
+
+    // Because the Arena catches everything, we don't even need
+    // to manually free the arguments array anymore!
     const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
 
     const source_dir = if (args.len > 1) args[1] else ".";
     const dest_base = if (args.len > 2) args[2] else "Documents";
@@ -24,23 +29,22 @@ pub fn main() !void {
 
         const ext_name = ext[1..];
 
-        // Create destination directory
+        // 2. Build paths without manual defer frees!
+        // The Arena will hold onto these strings until the program exits.
         const dest_dir = try std.fs.path.join(allocator, &.{ dest_base, ext_name });
-        defer allocator.free(dest_dir);
-
         try std.fs.cwd().makePath(dest_dir);
 
-        // Create full destination path
         const dest_path = try std.fs.path.join(allocator, &.{ dest_dir, entry.name });
-        defer allocator.free(dest_path);
 
-        // Check if file already exists at destination
+        // 3. The Bug Fix: Build the full path to the source file
+        const src_path = try std.fs.path.join(allocator, &.{ source_dir, entry.name });
+
         if (std.fs.cwd().access(dest_path, .{})) {
             print("File {s} already exists in {s}\n", .{ entry.name, dest_dir });
-            continue; // Skip this file
+            continue;
         } else |_| {
-            // File doesn't exist, safe to move
-            try std.fs.cwd().rename(entry.name, dest_path);
+            // Move the file using the full source path we just built
+            try std.fs.cwd().rename(src_path, dest_path);
             print("Moved {s} to {s}\n", .{ entry.name, dest_dir });
         }
     }
