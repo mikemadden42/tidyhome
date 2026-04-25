@@ -80,6 +80,7 @@ pub fn build(b: *std.Build) void {
                 // importing modules from different packages).
                 .{ .name = "tidyhome", .module = mod },
             },
+            .strip = true,
         }),
     });
 
