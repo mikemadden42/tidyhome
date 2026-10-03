@@ -27,6 +27,8 @@ zig build --release=small      # size-optimized build
 zig build -Dtarget=x86_64-linux
 zig build -Dtarget=aarch64-linux
 zig build -Dtarget=x86_64-windows
+zig build -Dtarget=aarch64-windows
 zig build -Dtarget=aarch64-macos
 zig build -Dtarget=x86_64-macos
+zig build -Dtarget=x86_64-freebsd
 ```
