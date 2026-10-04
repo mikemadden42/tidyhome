@@ -12,11 +12,11 @@
 
 ## Build & Project
 
-- [ ] **Conditional Strip:** Use `.strip = optimize != .Debug` (or a `b.option`) so Debug builds keep symbols and stack traces.
+- [x] **Conditional Strip:** Use `.strip = optimize != .debug` (or a `b.option`) so Debug builds keep symbols and stack traces.
 - [x] **Remove Template Leftovers:** Drop the empty `src/root.zig`, the exported `tidyhome` module and its test step, and the `zig init` boilerplate comments in `build.zig`.
 - [x] **Testing:** Extract the organize logic into a function taking a `Dir` and add test blocks using `std.testing.tmpDir` to verify file organization logic. `zig build test` currently passes vacuously.
 - [ ] **CI Workflow:** Add a GitHub Actions workflow running the commands listed in the README's CI section (no workflow exists yet).
-- [ ] **Document Compound Extensions:** Note in the README that `archive.tar.gz` is sorted by its last extension (`gz/`).
+- [x] **Document Compound Extensions:** Note in the README that `archive.tar.gz` is sorted by its last extension (`gz/`).
 
 ## Performance
 

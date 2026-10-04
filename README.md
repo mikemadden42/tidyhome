@@ -6,7 +6,7 @@ A small CLI utility that organizes files in a directory by sorting them into sub
 tidyhome [options] <source_dir> [dest_base]
 ```
 
-The source directory is required; the destination base defaults to `Documents` (relative to the current directory). For example, `report.pdf` would be moved to `dest_base/pdf/report.pdf`. Extension directories are lowercase, so `SCAN.PDF` also goes to `pdf/` (the file name itself is unchanged). Files that already exist at the destination are skipped.
+The source directory is required; the destination base defaults to `Documents` (relative to the current directory). For example, `report.pdf` would be moved to `dest_base/pdf/report.pdf`. Extension directories are lowercase, so `SCAN.PDF` also goes to `pdf/` (the file name itself is unchanged). Only the last extension counts, so `archive.tar.gz` goes to `gz/`. Files that already exist at the destination are skipped.
 
 | Option | Description |
 | --- | --- |
