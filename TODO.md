@@ -16,10 +16,10 @@
 - [x] **Conditional Strip:** Use `.strip = optimize != .debug` (or a `b.option`) so Debug builds keep symbols and stack traces.
 - [x] **Remove Template Leftovers:** Drop the empty `src/root.zig`, the exported `tidyhome` module and its test step, and the `zig init` boilerplate comments in `build.zig`.
 - [x] **Testing:** Extract the organize logic into a function taking a `Dir` and add test blocks using `std.testing.tmpDir` to verify file organization logic. `zig build test` currently passes vacuously.
-- [ ] **CI Workflow:** Add a GitHub Actions workflow running the commands listed in the README's CI section (no workflow exists yet).
+- [x] **CI Workflow:** Add a GitHub Actions workflow running the commands listed in the README's CI section (no workflow exists yet).
 - [x] **Document Compound Extensions:** Note in the README that `archive.tar.gz` is sorted by its last extension (`gz/`).
 - [x] **Document Exit Codes:** Add the exit codes to the README: 0 on success, 1 if any file could not be moved (or the source directory can't be opened), 2 for invalid arguments.
-- [ ] **Portable Test Paths:** Build expected paths in tests with `std.fs.path.join` (or `sep_str`) instead of hard-coded `/` so `zig build test` passes on Windows and Windows can join the CI test matrix.
+- [x] **Portable Test Paths:** Build expected paths in tests with `std.fs.path.join` (or `sep_str`) instead of hard-coded `/` so `zig build test` passes on Windows and Windows can join the CI test matrix.
 
 ## Performance
 

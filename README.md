@@ -25,6 +25,8 @@ Use `--` to pass a source directory whose name starts with `-`.
 
 ## CI
 
+`.github/workflows/ci.yml` runs the tests on Linux, macOS, and Windows and cross-compiles every target below. To run the same checks locally:
+
 ```sh
 zig fmt --check src/main.zig   # formatting
 zig fmt --check .              # formatting (entire project)

@@ -209,6 +209,10 @@ test "parseArgs options" {
     try std.testing.expectEqualStrings("-", parseArgs(&.{"-"}).run.source_dir);
 }
 
+/// Expected paths in output are built by `std.fs.path.join`, so they use the
+/// native separator.
+const sep = std.fs.path.sep_str;
+
 fn expectFileContents(dir: Dir, path: []const u8, expected: []const u8) !void {
     var buf: [64]u8 = undefined;
     const actual = try dir.readFile(std.testing.io, path, &buf);
@@ -259,7 +263,7 @@ test "organize moves files into extension directories" {
     try expectMissing(tmp.dir, "out/d");
 
     const output = out.buffered();
-    try std.testing.expect(std.mem.indexOf(u8, output, "Moved notes.txt to out/txt\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "Moved notes.txt to out" ++ sep ++ "txt\n") != null);
     try std.testing.expectEqual(4, std.mem.count(u8, output, "Moved "));
 }
 
@@ -280,7 +284,7 @@ test "organize skips files that already exist at the destination" {
 
     try expectFileContents(tmp.dir, "src/notes.txt", "new");
     try expectFileContents(tmp.dir, "out/txt/notes.txt", "old");
-    try std.testing.expectEqualStrings("File notes.txt already exists in out/txt\n", out.buffered());
+    try std.testing.expectEqualStrings("File notes.txt already exists in out" ++ sep ++ "txt\n", out.buffered());
 }
 
 test "organize dry run leaves the filesystem untouched" {
@@ -303,7 +307,7 @@ test "organize dry run leaves the filesystem untouched" {
     try expectFileContents(tmp.dir, "src/notes.txt", "notes");
 
     const output = out.buffered();
-    try std.testing.expect(std.mem.indexOf(u8, output, "Would move a.pdf to out/pdf\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "Would move a.pdf to out" ++ sep ++ "pdf\n") != null);
     try std.testing.expectEqual(4, std.mem.count(u8, output, "Would move "));
 }
 
@@ -376,7 +380,7 @@ test "organize reports a failing file and continues with the rest" {
     try expectFileContents(tmp.dir, "src/a.pdf", "a");
     try expectFileContents(tmp.dir, "out/pdf", "blocker");
     try expectFileContents(tmp.dir, "out/txt/notes.txt", "notes");
-    try std.testing.expectEqualStrings("Moved notes.txt to out/txt\n", out.buffered());
+    try std.testing.expectEqualStrings("Moved notes.txt to out" ++ sep ++ "txt\n", out.buffered());
     try std.testing.expect(std.mem.startsWith(u8, err_out.buffered(), "error: could not move a.pdf: "));
 }
 
@@ -399,8 +403,14 @@ test "organize groups extensions case-insensitively" {
     try expectFileContents(tmp.dir, "out/pdf/a.pdf", "a");
     try expectFileContents(tmp.dir, "out/pdf/B.PDF", "b");
     try expectFileContents(tmp.dir, "out/pdf/c.Pdf", "c");
-    try expectMissing(tmp.dir, "out/PDF");
-    try expectMissing(tmp.dir, "out/Pdf");
+    // Compare exact names: `access("out/PDF")` would succeed on
+    // case-insensitive filesystems (default macOS APFS, Windows NTFS).
+    var out_dir = try tmp.dir.openDir(io, "out", .{ .iterate = true });
+    defer out_dir.close(io);
+    var iter = out_dir.iterate();
+    const only = (try iter.next(io)) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("pdf", only.name);
+    try std.testing.expectEqual(null, try iter.next(io));
 }
 
 test "organize dry run reports files that already exist at the destination" {
@@ -424,5 +434,5 @@ test "organize dry run reports files that already exist at the destination" {
 
     try expectFileContents(tmp.dir, "src/notes.txt", "new");
     try expectFileContents(tmp.dir, "out/txt/notes.txt", "old");
-    try std.testing.expectEqualStrings("File notes.txt already exists in out/txt\n", out.buffered());
+    try std.testing.expectEqualStrings("File notes.txt already exists in out" ++ sep ++ "txt\n", out.buffered());
 }
