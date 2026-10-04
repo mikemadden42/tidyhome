@@ -15,6 +15,14 @@ The source directory is required; the destination base defaults to `Documents` (
 
 Use `--` to pass a source directory whose name starts with `-`.
 
+## Exit Codes
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Success (files that already exist at the destination are skipped, not failures) |
+| 1 | The source directory could not be opened, or at least one file could not be moved |
+| 2 | Invalid arguments |
+
 ## CI
 
 ```sh

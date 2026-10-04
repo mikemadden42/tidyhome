@@ -85,7 +85,11 @@ pub fn main(init: std.process.Init) !void {
         },
     };
 
-    const failed = try organize(io, init.gpa, Dir.cwd(), opts, stdout, stderr);
+    const failed = organize(io, init.gpa, Dir.cwd(), opts, stdout, stderr) catch |err| switch (err) {
+        // Already reported by organize.
+        error.SourceDirUnavailable => std.process.exit(1),
+        else => |e| return e,
+    };
     if (failed > 0) {
         try stderr.print("error: {d} file(s) could not be moved\n", .{failed});
         try stderr.flush();
@@ -95,10 +99,16 @@ pub fn main(init: std.process.Init) !void {
 
 /// Moves each regular, non-hidden file with an extension in `opts.source_dir`
 /// to `opts.dest_base/<extension>/`. Both paths are resolved relative to `base`.
+/// If the source directory cannot be opened, that is reported to `err_out` and
+/// `error.SourceDirUnavailable` is returned.
 /// A file that cannot be moved is reported to `err_out` and skipped; returns
 /// the number of such files.
 fn organize(io: Io, allocator: std.mem.Allocator, base: Dir, opts: Options, out: *Io.Writer, err_out: *Io.Writer) !usize {
-    var dir = try base.openDir(io, opts.source_dir, .{ .iterate = true });
+    var dir = base.openDir(io, opts.source_dir, .{ .iterate = true }) catch |err| {
+        try err_out.print("error: cannot open source directory '{s}': {t}\n", .{ opts.source_dir, err });
+        try err_out.flush();
+        return error.SourceDirUnavailable;
+    };
     defer dir.close(io);
 
     // Path allocations only live for one file; resetting keeps memory flat
@@ -322,9 +332,27 @@ test "organize reports a missing source directory" {
     var err_buf: [512]u8 = undefined;
     var err_out: Io.Writer = .fixed(&err_buf);
     try std.testing.expectError(
-        error.FileNotFound,
+        error.SourceDirUnavailable,
         organize(std.testing.io, std.testing.allocator, tmp.dir, .{ .source_dir = "nope" }, &out, &err_out),
     );
+    try std.testing.expectEqualStrings("error: cannot open source directory 'nope': FileNotFound\n", err_out.buffered());
+}
+
+test "organize reports a source path that is not a directory" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "file.txt", .data = "x" });
+
+    var out_buf: [512]u8 = undefined;
+    var out: Io.Writer = .fixed(&out_buf);
+    var err_buf: [512]u8 = undefined;
+    var err_out: Io.Writer = .fixed(&err_buf);
+    try std.testing.expectError(
+        error.SourceDirUnavailable,
+        organize(std.testing.io, std.testing.allocator, tmp.dir, .{ .source_dir = "file.txt" }, &out, &err_out),
+    );
+    try std.testing.expectEqualStrings("error: cannot open source directory 'file.txt': NotDir\n", err_out.buffered());
+    try expectFileContents(tmp.dir, "file.txt", "x");
 }
 
 test "organize reports a failing file and continues with the rest" {
