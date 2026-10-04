@@ -15,25 +15,25 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
+      # No version given: uses minimum_zig_version from build.zig.zon.
       - uses: mlugg/setup-zig@v2
-        with:
-          version: 0.17.0
-      - run: zig fmt --check .
-      - run: zig build test
-      - run: zig build test --release=safe
+      # Formatting is platform-independent, so checking it once is enough.
+      - name: Check formatting
+        if: runner.os == 'Linux'
+        run: zig fmt --check .
+      - run: zig build
+      - run: zig build test --summary all
+      - run: zig build test --release=safe --summary all
 
   build:
     name: Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: mlugg/setup-zig@v2
-        with:
-          version: 0.17.0
       - name: Release modes
         run: |
-          zig build
           zig build --release=safe
           zig build --release=fast
           zig build --release=small
@@ -50,3 +50,17 @@ jobs:
         with:
           name: tidyhome
           path: zig-out/*/bin/*
+
+  zig-nightly:
+    # Early warning for breaking changes to std.process.Init and std.Io.
+    # Allowed to fail so it never blocks a merge.
+    name: Test (Zig nightly)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: master
+      - run: zig build
+      - run: zig build test --summary all
