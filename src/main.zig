@@ -112,7 +112,7 @@ fn organize(io: Io, allocator: std.mem.Allocator, base: Dir, opts: Options, out:
         // Group `B.PDF` with `a.pdf`; only the directory name is lowercased.
         const ext_name = try std.ascii.allocLowerString(allocator, ext[1..]);
 
-        organizeFile(io, allocator, base, opts, entry.name, ext_name, out) catch |err| switch (err) {
+        organizeFile(io, allocator, base, dir, opts, entry.name, ext_name, out) catch |err| switch (err) {
             error.OutOfMemory, error.WriteFailed, error.Canceled => |e| return e,
             else => |e| {
                 try err_out.print("error: could not move {s}: {t}\n", .{ entry.name, e });
@@ -128,6 +128,7 @@ fn organizeFile(
     io: Io,
     allocator: std.mem.Allocator,
     base: Dir,
+    src_dir: Dir,
     opts: Options,
     name: []const u8,
     ext_name: []const u8,
@@ -135,7 +136,6 @@ fn organizeFile(
 ) !void {
     const dest_dir = try std.fs.path.join(allocator, &.{ opts.dest_base, ext_name });
     const dest_path = try std.fs.path.join(allocator, &.{ dest_dir, name });
-    const src_path = try std.fs.path.join(allocator, &.{ opts.source_dir, name });
 
     // Flush after every message so the log stays accurate if a later file
     // aborts the run.
@@ -154,7 +154,7 @@ fn organizeFile(
     try base.createDirPath(io, dest_dir);
     // Fails instead of overwriting, even if the destination appears after we
     // start; a separate existence check would leave a window for that.
-    Dir.renamePreserve(base, src_path, base, dest_path, io) catch |err| switch (err) {
+    Dir.renamePreserve(src_dir, name, base, dest_path, io) catch |err| switch (err) {
         error.PathAlreadyExists => {
             try out.print("File {s} already exists in {s}\n", .{ name, dest_dir });
             return;
