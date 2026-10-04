@@ -109,7 +109,10 @@ fn organize(io: Io, allocator: std.mem.Allocator, base: Dir, opts: Options, out:
         const ext = std.fs.path.extension(entry.name);
         if (ext.len <= 1) continue;
 
-        organizeFile(io, allocator, base, opts, entry.name, ext[1..], out) catch |err| switch (err) {
+        // Group `B.PDF` with `a.pdf`; only the directory name is lowercased.
+        const ext_name = try std.ascii.allocLowerString(allocator, ext[1..]);
+
+        organizeFile(io, allocator, base, opts, entry.name, ext_name, out) catch |err| switch (err) {
             error.OutOfMemory, error.WriteFailed, error.Canceled => |e| return e,
             else => |e| {
                 try err_out.print("error: could not move {s}: {t}\n", .{ entry.name, e });
@@ -341,4 +344,29 @@ test "organize reports a failing file and continues with the rest" {
     try expectFileContents(tmp.dir, "out/txt/notes.txt", "notes");
     try std.testing.expectEqualStrings("Moved notes.txt to out/txt\n", out.buffered());
     try std.testing.expect(std.mem.startsWith(u8, err_out.buffered(), "error: could not move a.pdf: "));
+}
+
+test "organize groups extensions case-insensitively" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try tmp.dir.createDirPath(io, "src");
+    try tmp.dir.writeFile(io, .{ .sub_path = "src/a.pdf", .data = "a" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "src/B.PDF", .data = "b" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "src/c.Pdf", .data = "c" });
+
+    var out_buf: [512]u8 = undefined;
+    var out: Io.Writer = .fixed(&out_buf);
+    var err_buf: [512]u8 = undefined;
+    var err_out: Io.Writer = .fixed(&err_buf);
+    try std.testing.expectEqual(0, try organize(io, arena.allocator(), tmp.dir, .{ .source_dir = "src", .dest_base = "out" }, &out, &err_out));
+
+    // File names keep their original case.
+    try expectFileContents(tmp.dir, "out/pdf/a.pdf", "a");
+    try expectFileContents(tmp.dir, "out/pdf/B.PDF", "b");
+    try expectFileContents(tmp.dir, "out/pdf/c.Pdf", "c");
+    try expectMissing(tmp.dir, "out/PDF");
+    try expectMissing(tmp.dir, "out/Pdf");
 }
