@@ -65,6 +65,10 @@ pub fn main(init: std.process.Init) !void {
     var stdout_writer = Io.File.stdout().writer(io, &stdout_buf);
     const stdout = &stdout_writer.interface;
 
+    var stderr_buf: [0x200]u8 = undefined;
+    var stderr_writer = Io.File.stderr().writer(io, &stderr_buf);
+    const stderr = &stderr_writer.interface;
+
     const args = try init.minimal.args.toSlice(allocator);
 
     const opts = switch (parseArgs(args[1..])) {
@@ -75,25 +79,29 @@ pub fn main(init: std.process.Init) !void {
             return;
         },
         .err => |msg| {
-            var stderr_buf: [0x200]u8 = undefined;
-            var stderr_writer = Io.File.stderr().writer(io, &stderr_buf);
-            const stderr = &stderr_writer.interface;
             try stderr.print("error: {s}\n\n{s}", .{ msg, usage });
             try stderr.flush();
             std.process.exit(2);
         },
     };
 
-    try organize(io, allocator, Dir.cwd(), opts, stdout);
-    try stdout.flush();
+    const failed = try organize(io, allocator, Dir.cwd(), opts, stdout, stderr);
+    if (failed > 0) {
+        try stderr.print("error: {d} file(s) could not be moved\n", .{failed});
+        try stderr.flush();
+        std.process.exit(1);
+    }
 }
 
 /// Moves each regular, non-hidden file with an extension in `opts.source_dir`
 /// to `opts.dest_base/<extension>/`. Both paths are resolved relative to `base`.
-fn organize(io: Io, allocator: std.mem.Allocator, base: Dir, opts: Options, out: *Io.Writer) !void {
+/// A file that cannot be moved is reported to `err_out` and skipped; returns
+/// the number of such files.
+fn organize(io: Io, allocator: std.mem.Allocator, base: Dir, opts: Options, out: *Io.Writer, err_out: *Io.Writer) !usize {
     var dir = try base.openDir(io, opts.source_dir, .{ .iterate = true });
     defer dir.close(io);
 
+    var failed: usize = 0;
     var iter = dir.iterate();
     while (try iter.next(io)) |entry| {
         if (entry.kind != .file or entry.name[0] == '.') continue;
@@ -101,26 +109,48 @@ fn organize(io: Io, allocator: std.mem.Allocator, base: Dir, opts: Options, out:
         const ext = std.fs.path.extension(entry.name);
         if (ext.len <= 1) continue;
 
-        const ext_name = ext[1..];
-
-        const dest_dir = try std.fs.path.join(allocator, &.{ opts.dest_base, ext_name });
-        const dest_path = try std.fs.path.join(allocator, &.{ dest_dir, entry.name });
-        const src_path = try std.fs.path.join(allocator, &.{ opts.source_dir, entry.name });
-
-        if (base.access(io, dest_path, .{})) {
-            try out.print("File {s} already exists in {s}\n", .{ entry.name, dest_dir });
-            continue;
-        } else |err| {
-            if (err != error.FileNotFound) return err;
-            if (opts.dry_run) {
-                try out.print("Would move {s} to {s}\n", .{ entry.name, dest_dir });
-                continue;
-            }
-            try base.createDirPath(io, dest_dir);
-            try Dir.rename(base, src_path, base, dest_path, io);
-            try out.print("Moved {s} to {s}\n", .{ entry.name, dest_dir });
-        }
+        organizeFile(io, allocator, base, opts, entry.name, ext[1..], out) catch |err| switch (err) {
+            error.OutOfMemory, error.WriteFailed, error.Canceled => |e| return e,
+            else => |e| {
+                try err_out.print("error: could not move {s}: {t}\n", .{ entry.name, e });
+                try err_out.flush();
+                failed += 1;
+            },
+        };
     }
+    return failed;
+}
+
+fn organizeFile(
+    io: Io,
+    allocator: std.mem.Allocator,
+    base: Dir,
+    opts: Options,
+    name: []const u8,
+    ext_name: []const u8,
+    out: *Io.Writer,
+) !void {
+    const dest_dir = try std.fs.path.join(allocator, &.{ opts.dest_base, ext_name });
+    const dest_path = try std.fs.path.join(allocator, &.{ dest_dir, name });
+    const src_path = try std.fs.path.join(allocator, &.{ opts.source_dir, name });
+
+    // Flush after every message so the log stays accurate if a later file
+    // aborts the run.
+    defer out.flush() catch {};
+
+    if (base.access(io, dest_path, .{})) {
+        try out.print("File {s} already exists in {s}\n", .{ name, dest_dir });
+        return;
+    } else |err| {
+        if (err != error.FileNotFound) return err;
+    }
+    if (opts.dry_run) {
+        try out.print("Would move {s} to {s}\n", .{ name, dest_dir });
+        return;
+    }
+    try base.createDirPath(io, dest_dir);
+    try Dir.rename(base, src_path, base, dest_path, io);
+    try out.print("Moved {s} to {s}\n", .{ name, dest_dir });
 }
 
 test "parseArgs requires a source directory" {
@@ -183,7 +213,9 @@ test "organize moves files into extension directories" {
 
     var out_buf: [512]u8 = undefined;
     var out: Io.Writer = .fixed(&out_buf);
-    try organize(std.testing.io, arena.allocator(), tmp.dir, .{ .source_dir = "src", .dest_base = "out" }, &out);
+    var err_buf: [512]u8 = undefined;
+    var err_out: Io.Writer = .fixed(&err_buf);
+    try std.testing.expectEqual(0, try organize(std.testing.io, arena.allocator(), tmp.dir, .{ .source_dir = "src", .dest_base = "out" }, &out, &err_out));
 
     try expectFileContents(tmp.dir, "out/pdf/a.pdf", "a");
     try expectFileContents(tmp.dir, "out/pdf/b.pdf", "b");
@@ -217,7 +249,9 @@ test "organize skips files that already exist at the destination" {
 
     var out_buf: [512]u8 = undefined;
     var out: Io.Writer = .fixed(&out_buf);
-    try organize(io, arena.allocator(), tmp.dir, .{ .source_dir = "src", .dest_base = "out" }, &out);
+    var err_buf: [512]u8 = undefined;
+    var err_out: Io.Writer = .fixed(&err_buf);
+    try std.testing.expectEqual(0, try organize(io, arena.allocator(), tmp.dir, .{ .source_dir = "src", .dest_base = "out" }, &out, &err_out));
 
     try expectFileContents(tmp.dir, "src/notes.txt", "new");
     try expectFileContents(tmp.dir, "out/txt/notes.txt", "old");
@@ -233,11 +267,13 @@ test "organize dry run leaves the filesystem untouched" {
 
     var out_buf: [512]u8 = undefined;
     var out: Io.Writer = .fixed(&out_buf);
-    try organize(std.testing.io, arena.allocator(), tmp.dir, .{
+    var err_buf: [512]u8 = undefined;
+    var err_out: Io.Writer = .fixed(&err_buf);
+    try std.testing.expectEqual(0, try organize(std.testing.io, arena.allocator(), tmp.dir, .{
         .source_dir = "src",
         .dest_base = "out",
         .dry_run = true,
-    }, &out);
+    }, &out, &err_out));
 
     try expectMissing(tmp.dir, "out");
     try expectFileContents(tmp.dir, "src/a.pdf", "a");
@@ -259,7 +295,9 @@ test "organize creates a nested destination base" {
 
     var out_buf: [512]u8 = undefined;
     var out: Io.Writer = .fixed(&out_buf);
-    try organize(io, arena.allocator(), tmp.dir, .{ .source_dir = "src", .dest_base = "x/y" }, &out);
+    var err_buf: [512]u8 = undefined;
+    var err_out: Io.Writer = .fixed(&err_buf);
+    try std.testing.expectEqual(0, try organize(io, arena.allocator(), tmp.dir, .{ .source_dir = "src", .dest_base = "x/y" }, &out, &err_out));
 
     try expectFileContents(tmp.dir, "x/y/pdf/a.pdf", "a");
 }
@@ -270,8 +308,37 @@ test "organize reports a missing source directory" {
 
     var out_buf: [512]u8 = undefined;
     var out: Io.Writer = .fixed(&out_buf);
+    var err_buf: [512]u8 = undefined;
+    var err_out: Io.Writer = .fixed(&err_buf);
     try std.testing.expectError(
         error.FileNotFound,
-        organize(std.testing.io, std.testing.allocator, tmp.dir, .{ .source_dir = "nope" }, &out),
+        organize(std.testing.io, std.testing.allocator, tmp.dir, .{ .source_dir = "nope" }, &out, &err_out),
     );
+}
+
+test "organize reports a failing file and continues with the rest" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try tmp.dir.createDirPath(io, "src");
+    try tmp.dir.writeFile(io, .{ .sub_path = "src/a.pdf", .data = "a" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "src/notes.txt", .data = "notes" });
+    // A regular file where the pdf destination directory should go.
+    try tmp.dir.createDirPath(io, "out");
+    try tmp.dir.writeFile(io, .{ .sub_path = "out/pdf", .data = "blocker" });
+
+    var out_buf: [512]u8 = undefined;
+    var out: Io.Writer = .fixed(&out_buf);
+    var err_buf: [512]u8 = undefined;
+    var err_out: Io.Writer = .fixed(&err_buf);
+    const failed = try organize(io, arena.allocator(), tmp.dir, .{ .source_dir = "src", .dest_base = "out" }, &out, &err_out);
+
+    try std.testing.expectEqual(1, failed);
+    try expectFileContents(tmp.dir, "src/a.pdf", "a");
+    try expectFileContents(tmp.dir, "out/pdf", "blocker");
+    try expectFileContents(tmp.dir, "out/txt/notes.txt", "notes");
+    try std.testing.expectEqualStrings("Moved notes.txt to out/txt\n", out.buffered());
+    try std.testing.expect(std.mem.startsWith(u8, err_out.buffered(), "error: could not move a.pdf: "));
 }
