@@ -3,10 +3,17 @@
 A small CLI utility that organizes files in a directory by sorting them into subdirectories based on their file extension.
 
 ```
-tidyhome [source_dir] [dest_base]
+tidyhome [options] <source_dir> [dest_base]
 ```
 
-Defaults to the current directory as source and `Documents` as the destination base. For example, `report.pdf` would be moved to `dest_base/pdf/report.pdf`. Files that already exist at the destination are skipped.
+The source directory is required; the destination base defaults to `Documents` (relative to the current directory). For example, `report.pdf` would be moved to `dest_base/pdf/report.pdf`. Files that already exist at the destination are skipped.
+
+| Option | Description |
+| --- | --- |
+| `-n`, `--dry-run` | Show what would be moved without changing anything |
+| `-h`, `--help` | Show usage and exit |
+
+Use `--` to pass a source directory whose name starts with `-`.
 
 ## CI
 

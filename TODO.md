@@ -2,13 +2,13 @@
 
 ## Correctness & Safety
 
-- [ ] **Safe Defaults:** Require an explicit source directory (or default to a dry run). Today `zig build run` with no arguments moves `build.zig`, `build.zig.zon`, and `*.md` from the repo into `./Documents/`.
-- [ ] **Argument Parsing:** Handle `--help`/usage and add `--dry-run`. Currently `tidyhome --help` treats `--help` as the source path and fails with `error: FileNotFound`; extra arguments are silently ignored.
+- [x] **Safe Defaults:** Require an explicit source directory (or default to a dry run). Today `zig build run` with no arguments moves `build.zig`, `build.zig.zon`, and `*.md` from the repo into `./Documents/`.
+- [x] **Argument Parsing:** Handle `--help`/usage and add `--dry-run`. Currently `tidyhome --help` treats `--help` as the source path and fails with `error: FileNotFound`; extra arguments are silently ignored.
 - [ ] **Per-File Error Handling:** Report and continue when a single file fails (`RenameAcrossMountPoints`, `AccessDenied`, `NotDir` when a file blocks a destination directory) instead of aborting the whole run with `try`.
 - [ ] **Robust Logging:** Flush `stdout` after each message or via `defer`. On an aborted run, "Moved ..." lines still in the 512-byte buffer are lost, so files can be moved without any record.
 - [ ] **Atomic No-Replace Rename:** Replace the `access()` + `rename()` check with an atomic no-overwrite move (`renameat2(RENAME_NOREPLACE)` on Linux, `renamex_np(RENAME_EXCL)` on macOS, or link + unlink). POSIX `rename` silently replaces a destination created between the check and the move.
 - [ ] **Normalize Extension Case:** Lowercase extensions so `B.PDF` and `a.pdf` land in the same directory on case-sensitive filesystems.
-- [ ] **Avoid Empty Directories:** Only create the destination directory when a file will actually be moved there (skipped files currently still trigger `createDirPath`).
+- [x] **Avoid Empty Directories:** Only create the destination directory when a file will actually be moved there (skipped files currently still trigger `createDirPath`).
 
 ## Build & Project
 
