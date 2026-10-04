@@ -85,7 +85,7 @@ pub fn main(init: std.process.Init) !void {
         },
     };
 
-    const failed = try organize(io, allocator, Dir.cwd(), opts, stdout, stderr);
+    const failed = try organize(io, init.gpa, Dir.cwd(), opts, stdout, stderr);
     if (failed > 0) {
         try stderr.print("error: {d} file(s) could not be moved\n", .{failed});
         try stderr.flush();
@@ -101,18 +101,26 @@ fn organize(io: Io, allocator: std.mem.Allocator, base: Dir, opts: Options, out:
     var dir = try base.openDir(io, opts.source_dir, .{ .iterate = true });
     defer dir.close(io);
 
+    // Path allocations only live for one file; resetting keeps memory flat
+    // regardless of how many files the directory holds.
+    var file_arena: std.heap.ArenaAllocator = .init(allocator);
+    defer file_arena.deinit();
+
     var failed: usize = 0;
     var iter = dir.iterate();
     while (try iter.next(io)) |entry| {
+        _ = file_arena.reset(.retain_capacity);
+        const file_allocator = file_arena.allocator();
+
         if (entry.kind != .file or entry.name[0] == '.') continue;
 
         const ext = std.fs.path.extension(entry.name);
         if (ext.len <= 1) continue;
 
         // Group `B.PDF` with `a.pdf`; only the directory name is lowercased.
-        const ext_name = try std.ascii.allocLowerString(allocator, ext[1..]);
+        const ext_name = try std.ascii.allocLowerString(file_allocator, ext[1..]);
 
-        organizeFile(io, allocator, base, dir, opts, entry.name, ext_name, out) catch |err| switch (err) {
+        organizeFile(io, file_allocator, base, dir, opts, entry.name, ext_name, out) catch |err| switch (err) {
             error.OutOfMemory, error.WriteFailed, error.Canceled => |e| return e,
             else => |e| {
                 try err_out.print("error: could not move {s}: {t}\n", .{ entry.name, e });
@@ -216,8 +224,6 @@ fn makeSourceTree(dir: Dir) !void {
 }
 
 test "organize moves files into extension directories" {
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try makeSourceTree(tmp.dir);
@@ -226,7 +232,7 @@ test "organize moves files into extension directories" {
     var out: Io.Writer = .fixed(&out_buf);
     var err_buf: [512]u8 = undefined;
     var err_out: Io.Writer = .fixed(&err_buf);
-    try std.testing.expectEqual(0, try organize(std.testing.io, arena.allocator(), tmp.dir, .{ .source_dir = "src", .dest_base = "out" }, &out, &err_out));
+    try std.testing.expectEqual(0, try organize(std.testing.io, std.testing.allocator, tmp.dir, .{ .source_dir = "src", .dest_base = "out" }, &out, &err_out));
 
     try expectFileContents(tmp.dir, "out/pdf/a.pdf", "a");
     try expectFileContents(tmp.dir, "out/pdf/b.pdf", "b");
@@ -248,8 +254,6 @@ test "organize moves files into extension directories" {
 }
 
 test "organize skips files that already exist at the destination" {
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const io = std.testing.io;
@@ -262,7 +266,7 @@ test "organize skips files that already exist at the destination" {
     var out: Io.Writer = .fixed(&out_buf);
     var err_buf: [512]u8 = undefined;
     var err_out: Io.Writer = .fixed(&err_buf);
-    try std.testing.expectEqual(0, try organize(io, arena.allocator(), tmp.dir, .{ .source_dir = "src", .dest_base = "out" }, &out, &err_out));
+    try std.testing.expectEqual(0, try organize(io, std.testing.allocator, tmp.dir, .{ .source_dir = "src", .dest_base = "out" }, &out, &err_out));
 
     try expectFileContents(tmp.dir, "src/notes.txt", "new");
     try expectFileContents(tmp.dir, "out/txt/notes.txt", "old");
@@ -270,8 +274,6 @@ test "organize skips files that already exist at the destination" {
 }
 
 test "organize dry run leaves the filesystem untouched" {
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try makeSourceTree(tmp.dir);
@@ -280,7 +282,7 @@ test "organize dry run leaves the filesystem untouched" {
     var out: Io.Writer = .fixed(&out_buf);
     var err_buf: [512]u8 = undefined;
     var err_out: Io.Writer = .fixed(&err_buf);
-    try std.testing.expectEqual(0, try organize(std.testing.io, arena.allocator(), tmp.dir, .{
+    try std.testing.expectEqual(0, try organize(std.testing.io, std.testing.allocator, tmp.dir, .{
         .source_dir = "src",
         .dest_base = "out",
         .dry_run = true,
@@ -296,8 +298,6 @@ test "organize dry run leaves the filesystem untouched" {
 }
 
 test "organize creates a nested destination base" {
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const io = std.testing.io;
@@ -308,7 +308,7 @@ test "organize creates a nested destination base" {
     var out: Io.Writer = .fixed(&out_buf);
     var err_buf: [512]u8 = undefined;
     var err_out: Io.Writer = .fixed(&err_buf);
-    try std.testing.expectEqual(0, try organize(io, arena.allocator(), tmp.dir, .{ .source_dir = "src", .dest_base = "x/y" }, &out, &err_out));
+    try std.testing.expectEqual(0, try organize(io, std.testing.allocator, tmp.dir, .{ .source_dir = "src", .dest_base = "x/y" }, &out, &err_out));
 
     try expectFileContents(tmp.dir, "x/y/pdf/a.pdf", "a");
 }
@@ -328,8 +328,6 @@ test "organize reports a missing source directory" {
 }
 
 test "organize reports a failing file and continues with the rest" {
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const io = std.testing.io;
@@ -344,7 +342,7 @@ test "organize reports a failing file and continues with the rest" {
     var out: Io.Writer = .fixed(&out_buf);
     var err_buf: [512]u8 = undefined;
     var err_out: Io.Writer = .fixed(&err_buf);
-    const failed = try organize(io, arena.allocator(), tmp.dir, .{ .source_dir = "src", .dest_base = "out" }, &out, &err_out);
+    const failed = try organize(io, std.testing.allocator, tmp.dir, .{ .source_dir = "src", .dest_base = "out" }, &out, &err_out);
 
     try std.testing.expectEqual(1, failed);
     try expectFileContents(tmp.dir, "src/a.pdf", "a");
@@ -355,8 +353,6 @@ test "organize reports a failing file and continues with the rest" {
 }
 
 test "organize groups extensions case-insensitively" {
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const io = std.testing.io;
@@ -369,7 +365,7 @@ test "organize groups extensions case-insensitively" {
     var out: Io.Writer = .fixed(&out_buf);
     var err_buf: [512]u8 = undefined;
     var err_out: Io.Writer = .fixed(&err_buf);
-    try std.testing.expectEqual(0, try organize(io, arena.allocator(), tmp.dir, .{ .source_dir = "src", .dest_base = "out" }, &out, &err_out));
+    try std.testing.expectEqual(0, try organize(io, std.testing.allocator, tmp.dir, .{ .source_dir = "src", .dest_base = "out" }, &out, &err_out));
 
     // File names keep their original case.
     try expectFileContents(tmp.dir, "out/pdf/a.pdf", "a");
@@ -380,8 +376,6 @@ test "organize groups extensions case-insensitively" {
 }
 
 test "organize dry run reports files that already exist at the destination" {
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const io = std.testing.io;
@@ -394,7 +388,7 @@ test "organize dry run reports files that already exist at the destination" {
     var out: Io.Writer = .fixed(&out_buf);
     var err_buf: [512]u8 = undefined;
     var err_out: Io.Writer = .fixed(&err_buf);
-    try std.testing.expectEqual(0, try organize(io, arena.allocator(), tmp.dir, .{
+    try std.testing.expectEqual(0, try organize(io, std.testing.allocator, tmp.dir, .{
         .source_dir = "src",
         .dest_base = "out",
         .dry_run = true,
