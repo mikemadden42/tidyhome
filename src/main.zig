@@ -141,18 +141,26 @@ fn organizeFile(
     // aborts the run.
     defer out.flush() catch {};
 
-    if (base.access(io, dest_path, .{})) {
-        try out.print("File {s} already exists in {s}\n", .{ name, dest_dir });
-        return;
-    } else |err| {
-        if (err != error.FileNotFound) return err;
-    }
     if (opts.dry_run) {
-        try out.print("Would move {s} to {s}\n", .{ name, dest_dir });
+        if (base.access(io, dest_path, .{})) {
+            try out.print("File {s} already exists in {s}\n", .{ name, dest_dir });
+        } else |err| {
+            if (err != error.FileNotFound) return err;
+            try out.print("Would move {s} to {s}\n", .{ name, dest_dir });
+        }
         return;
     }
+
     try base.createDirPath(io, dest_dir);
-    try Dir.rename(base, src_path, base, dest_path, io);
+    // Fails instead of overwriting, even if the destination appears after we
+    // start; a separate existence check would leave a window for that.
+    Dir.renamePreserve(base, src_path, base, dest_path, io) catch |err| switch (err) {
+        error.PathAlreadyExists => {
+            try out.print("File {s} already exists in {s}\n", .{ name, dest_dir });
+            return;
+        },
+        else => |e| return e,
+    };
     try out.print("Moved {s} to {s}\n", .{ name, dest_dir });
 }
 
@@ -369,4 +377,30 @@ test "organize groups extensions case-insensitively" {
     try expectFileContents(tmp.dir, "out/pdf/c.Pdf", "c");
     try expectMissing(tmp.dir, "out/PDF");
     try expectMissing(tmp.dir, "out/Pdf");
+}
+
+test "organize dry run reports files that already exist at the destination" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try tmp.dir.createDirPath(io, "src");
+    try tmp.dir.createDirPath(io, "out/txt");
+    try tmp.dir.writeFile(io, .{ .sub_path = "src/notes.txt", .data = "new" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "out/txt/notes.txt", .data = "old" });
+
+    var out_buf: [512]u8 = undefined;
+    var out: Io.Writer = .fixed(&out_buf);
+    var err_buf: [512]u8 = undefined;
+    var err_out: Io.Writer = .fixed(&err_buf);
+    try std.testing.expectEqual(0, try organize(io, arena.allocator(), tmp.dir, .{
+        .source_dir = "src",
+        .dest_base = "out",
+        .dry_run = true,
+    }, &out, &err_out));
+
+    try expectFileContents(tmp.dir, "src/notes.txt", "new");
+    try expectFileContents(tmp.dir, "out/txt/notes.txt", "old");
+    try std.testing.expectEqualStrings("File notes.txt already exists in out/txt\n", out.buffered());
 }
