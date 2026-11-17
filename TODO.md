@@ -10,6 +10,12 @@
 - [x] **Normalize Extension Case:** Lowercase extensions so `B.PDF` and `a.pdf` land in the same directory on case-sensitive filesystems.
 - [x] **Avoid Empty Directories:** Only create the destination directory when a file will actually be moved there (skipped files currently still trigger `createDirPath`).
 - [x] **Clear Source Directory Errors:** Name the path when the source directory can't be opened. Today `tidyhome nope` prints only `error: FileNotFound`; it should say something like `error: cannot open source directory 'nope': FileNotFound`.
+- [ ] **Streaming Output:** Use `writerStreaming` instead of `writer` for stdout and stderr. The positional writers each start at offset 0, so `tidyhome src >> run.log` overwrites the existing log and `tidyhome src out > log 2>&1` interleaves stderr on top of stdout (e.g. `.txt: NotDir` clobbering the end of a "Moved ..." line).
+- [ ] **macOS No-Replace Fallback:** Catch `error.OperationUnsupported` from `renamePreserve` and fall back to link + unlink. On macOS, Zig calls `renameatx_np(RENAME_EXCL)` with no fallback, so on volumes that don't support it (possibly some SMB shares or exFAT drives) every file fails.
+- [ ] **No-Op Moves:** Detect when a file is already at its destination. `tidyhome Documents/pdf Documents` prints `Moved a.pdf to Documents/pdf` and exits 0, because renaming a file to its own path succeeds.
+- [ ] **Unknown Entry Kinds:** Stat entries whose kind is `.unknown` instead of skipping them. Filesystems that don't report types from `readdir` (some network filesystems, older XFS) currently move nothing, with no warning.
+- [ ] **Windows Reserved Names:** Handle extensions that map to reserved device names (`x.con`, `x.aux`, `x.nul`, `x.com1`). Windows can't create those directories, so the file fails with an error.
+- [ ] **Destination in Errors:** Name the destination in per-file errors. `error: could not move a.pdf: NotDir` doesn't say which path was blocked.
 
 ## Build & Project
 
@@ -20,6 +26,10 @@
 - [x] **Document Compound Extensions:** Note in the README that `archive.tar.gz` is sorted by its last extension (`gz/`).
 - [x] **Document Exit Codes:** Add the exit codes to the README: 0 on success, 1 if any file could not be moved (or the source directory can't be opened), 2 for invalid arguments.
 - [x] **Portable Test Paths:** Build expected paths in tests with `std.fs.path.join` (or `sep_str`) instead of hard-coded `/` so `zig build test` passes on Windows and Windows can join the CI test matrix.
+- [ ] **Document Cross-Filesystem Moves:** Note in the README that moves across filesystems fail with `CrossDevice` (no copy fallback), or add a copy + delete fallback.
+- [ ] **Document Link + Unlink Fallback:** Note in the README that on Linux filesystems without `RENAME_NOREPLACE` (and always on FreeBSD), Zig moves by link + unlink and ignores a failed unlink, so a file can be left in both the source and the destination.
+- [ ] **Document ASCII-Only Lowercasing:** Note in the README that only ASCII letters in extensions are lowercased (`allocLowerString`), so `.ÄBC` and `.äbc` land in different directories.
+- [ ] **Exit Code Tests:** Test `main`'s exit codes (0, 1, 2) end to end by running the built binary from `build.zig`, including output sent to a file with stdout and stderr merged, to cover the Streaming Output item.
 
 ## Performance
 
