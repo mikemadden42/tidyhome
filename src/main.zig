@@ -173,9 +173,7 @@ fn organizeFile(
     }
 
     try base.createDirPath(io, dest_dir);
-    // Fails instead of overwriting, even if the destination appears after we
-    // start; a separate existence check would leave a window for that.
-    Dir.renamePreserve(src_dir, name, base, dest_path, io) catch |err| switch (err) {
+    moveNoReplace(io, src_dir, name, base, dest_path) catch |err| switch (err) {
         error.PathAlreadyExists => {
             try out.print("File {s} already exists in {s}\n", .{ name, dest_dir });
             return;
@@ -183,6 +181,35 @@ fn organizeFile(
         else => |e| return e,
     };
     try out.print("Moved {s} to {s}\n", .{ name, dest_dir });
+}
+
+/// Moves `name` in `src_dir` to `dest_path` in `dest_dir`, returning
+/// `error.PathAlreadyExists` instead of overwriting.
+fn moveNoReplace(io: Io, src_dir: Dir, name: []const u8, dest_dir: Dir, dest_path: []const u8) !void {
+    // Fails instead of overwriting, even if the destination appears after we
+    // start; a separate existence check would leave a window for that.
+    if (Dir.renamePreserve(src_dir, name, dest_dir, dest_path, io)) |_| {
+        return;
+    } else |err| switch (err) {
+        // exFAT and FAT32 support neither no-replace rename nor hard links.
+        error.OperationUnsupported => {},
+        else => |e| return e,
+    }
+    return movePlaceholder(io, src_dir, name, dest_dir, dest_path);
+}
+
+/// Claims `dest_path` with an exclusive create, then renames over that empty
+/// placeholder. Only another process deleting the placeholder and creating a
+/// file in its place in between could be overwritten. If we're killed between
+/// the two steps, the placeholder stays and later runs report the file as
+/// already existing.
+fn movePlaceholder(io: Io, src_dir: Dir, name: []const u8, dest_dir: Dir, dest_path: []const u8) !void {
+    const placeholder = try dest_dir.createFile(io, dest_path, .{ .exclusive = true });
+    placeholder.close(io);
+    Dir.rename(src_dir, name, dest_dir, dest_path, io) catch |err| {
+        dest_dir.deleteFile(io, dest_path) catch {};
+        return err;
+    };
 }
 
 test "parseArgs requires a source directory" {
@@ -414,6 +441,42 @@ test "organize groups extensions case-insensitively" {
     const only = (try iter.next(io)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("pdf", only.name);
     try std.testing.expectEqual(null, try iter.next(io));
+}
+
+// The placeholder fallback only runs on filesystems like exFAT, so call it
+// directly; it works the same on any filesystem.
+test "movePlaceholder moves a file" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.pdf", .data = "a" });
+
+    try movePlaceholder(io, tmp.dir, "a.pdf", tmp.dir, "moved.pdf");
+
+    try expectFileContents(tmp.dir, "moved.pdf", "a");
+    try expectMissing(tmp.dir, "a.pdf");
+}
+
+test "movePlaceholder does not overwrite an existing file" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.pdf", .data = "new" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "moved.pdf", .data = "old" });
+
+    try std.testing.expectError(error.PathAlreadyExists, movePlaceholder(io, tmp.dir, "a.pdf", tmp.dir, "moved.pdf"));
+
+    try expectFileContents(tmp.dir, "a.pdf", "new");
+    try expectFileContents(tmp.dir, "moved.pdf", "old");
+}
+
+test "movePlaceholder removes the placeholder when the rename fails" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try std.testing.expectError(error.FileNotFound, movePlaceholder(std.testing.io, tmp.dir, "missing.pdf", tmp.dir, "moved.pdf"));
+
+    try expectMissing(tmp.dir, "moved.pdf");
 }
 
 test "organize dry run reports files that already exist at the destination" {
