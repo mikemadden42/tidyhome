@@ -114,6 +114,15 @@ fn organize(io: Io, allocator: std.mem.Allocator, base: Dir, opts: Options, out:
     };
     defer dir.close(io);
 
+    // Used to spot files already in their destination directory, such as
+    // `tidyhome Documents/pdf Documents`. Without it, those files are moved
+    // onto themselves, which succeeds and is reported as a move.
+    const src_real: ?[:0]const u8 = dir.realPathFileAlloc(io, ".", allocator) catch |err| switch (err) {
+        error.OutOfMemory => |e| return e,
+        else => null,
+    };
+    defer if (src_real) |p| allocator.free(p);
+
     // Path allocations only live for one file; resetting keeps memory flat
     // regardless of how many files the directory holds.
     var file_arena: std.heap.ArenaAllocator = .init(allocator);
@@ -132,11 +141,12 @@ fn organize(io: Io, allocator: std.mem.Allocator, base: Dir, opts: Options, out:
 
         // Group `B.PDF` with `a.pdf`; only the directory name is lowercased.
         const ext_name = try std.ascii.allocLowerString(file_allocator, ext[1..]);
+        const dest_dir = try std.fs.path.join(file_allocator, &.{ opts.dest_base, ext_name });
 
-        organizeFile(io, file_allocator, base, dir, opts, entry.name, ext_name, out) catch |err| switch (err) {
+        organizeFile(io, file_allocator, base, dir, src_real, opts, entry.name, dest_dir, out) catch |err| switch (err) {
             error.OutOfMemory, error.WriteFailed, error.Canceled => |e| return e,
             else => |e| {
-                try err_out.print("error: could not move {s}: {t}\n", .{ entry.name, e });
+                try err_out.print("error: could not move {s} to {s}: {t}\n", .{ entry.name, dest_dir, e });
                 try err_out.flush();
                 failed += 1;
             },
@@ -150,17 +160,24 @@ fn organizeFile(
     allocator: std.mem.Allocator,
     base: Dir,
     src_dir: Dir,
+    src_real: ?[]const u8,
     opts: Options,
     name: []const u8,
-    ext_name: []const u8,
+    dest_dir: []const u8,
     out: *Io.Writer,
 ) !void {
-    const dest_dir = try std.fs.path.join(allocator, &.{ opts.dest_base, ext_name });
     const dest_path = try std.fs.path.join(allocator, &.{ dest_dir, name });
 
     // Flush after every message so the log stays accurate if a later file
     // aborts the run.
     defer out.flush() catch {};
+
+    if (src_real) |real| {
+        if (try resolvesTo(io, allocator, base, dest_dir, real)) {
+            try out.print("File {s} is already in {s}\n", .{ name, dest_dir });
+            return;
+        }
+    }
 
     if (opts.dry_run) {
         if (base.access(io, dest_path, .{})) {
@@ -181,6 +198,16 @@ fn organizeFile(
         else => |e| return e,
     };
     try out.print("Moved {s} to {s}\n", .{ name, dest_dir });
+}
+
+/// Whether `sub_path` in `base` resolves to `real_path`. A path that can't be
+/// resolved, such as a directory that doesn't exist yet, counts as different.
+fn resolvesTo(io: Io, allocator: std.mem.Allocator, base: Dir, sub_path: []const u8, real_path: []const u8) !bool {
+    const real = base.realPathFileAlloc(io, sub_path, allocator) catch |err| switch (err) {
+        error.OutOfMemory => |e| return e,
+        else => return false,
+    };
+    return std.mem.eql(u8, real, real_path);
 }
 
 /// Moves `name` in `src_dir` to `dest_path` in `dest_dir`, returning
@@ -411,7 +438,7 @@ test "organize reports a failing file and continues with the rest" {
     try expectFileContents(tmp.dir, "out/pdf", "blocker");
     try expectFileContents(tmp.dir, "out/txt/notes.txt", "notes");
     try std.testing.expectEqualStrings("Moved notes.txt to out" ++ sep ++ "txt\n", out.buffered());
-    try std.testing.expect(std.mem.startsWith(u8, err_out.buffered(), "error: could not move a.pdf: "));
+    try std.testing.expect(std.mem.startsWith(u8, err_out.buffered(), "error: could not move a.pdf to out" ++ sep ++ "pdf: "));
 }
 
 test "organize groups extensions case-insensitively" {
@@ -441,6 +468,37 @@ test "organize groups extensions case-insensitively" {
     const only = (try iter.next(io)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("pdf", only.name);
     try std.testing.expectEqual(null, try iter.next(io));
+}
+
+test "organize leaves files that are already in their destination directory" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try tmp.dir.createDirPath(io, "out/pdf");
+    try tmp.dir.writeFile(io, .{ .sub_path = "out/pdf/a.pdf", .data = "a" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "out/pdf/b.txt", .data = "b" });
+
+    for ([_]bool{ true, false }) |dry_run| {
+        var out_buf: [512]u8 = undefined;
+        var out: Io.Writer = .fixed(&out_buf);
+        var err_buf: [512]u8 = undefined;
+        var err_out: Io.Writer = .fixed(&err_buf);
+        // Spelled differently from `out/pdf`, so only resolving the paths
+        // can tell they're the same directory.
+        try std.testing.expectEqual(0, try organize(io, std.testing.allocator, tmp.dir, .{
+            .source_dir = "." ++ sep ++ "out" ++ sep ++ "pdf" ++ sep,
+            .dest_base = "out",
+            .dry_run = dry_run,
+        }, &out, &err_out));
+
+        const output = out.buffered();
+        try std.testing.expect(std.mem.indexOf(u8, output, "File a.pdf is already in out" ++ sep ++ "pdf\n") != null);
+        try std.testing.expect(std.mem.indexOf(u8, output, " b.txt to out" ++ sep ++ "txt\n") != null);
+        try std.testing.expectEqual(0, std.mem.count(u8, output, " a.pdf to "));
+    }
+
+    try expectFileContents(tmp.dir, "out/pdf/a.pdf", "a");
+    try expectFileContents(tmp.dir, "out/txt/b.txt", "b");
 }
 
 // The placeholder fallback only runs on filesystems like exFAT, so call it

@@ -96,7 +96,7 @@ test "exit code 1 keeps stdout and stderr intact in a merged log" {
     defer gpa.free(output);
     const expected_lines = [_][]const u8{
         "Moved a.pdf to out" ++ std.fs.path.sep_str ++ "pdf\n",
-        "error: could not move b.txt: ",
+        "error: could not move b.txt to out" ++ std.fs.path.sep_str ++ "txt: ",
         "error: 1 file(s) could not be moved\n",
     };
     for (expected_lines) |line| {

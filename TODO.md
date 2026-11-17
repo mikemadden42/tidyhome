@@ -12,10 +12,10 @@
 - [x] **Clear Source Directory Errors:** Name the path when the source directory can't be opened. Today `tidyhome nope` prints only `error: FileNotFound`; it should say something like `error: cannot open source directory 'nope': FileNotFound`.
 - [x] **Streaming Output:** Use `writerStreaming` instead of `writer` for stdout and stderr. The positional writers each start at offset 0, so `tidyhome src >> run.log` overwrites the existing log and `tidyhome src out > log 2>&1` interleaves stderr on top of stdout (e.g. `.txt: NotDir` clobbering the end of a "Moved ..." line).
 - [x] **macOS No-Replace Fallback:** Catch `error.OperationUnsupported` from `renamePreserve` and fall back to an exclusive-create placeholder + `rename`. On macOS, Zig calls `renameatx_np(RENAME_EXCL)` with no fallback, so on exFAT and FAT32 (confirmed with `hdiutil` disk images) every file failed. Link + unlink isn't an option there: neither filesystem supports hard links.
-- [ ] **No-Op Moves:** Detect when a file is already at its destination. `tidyhome Documents/pdf Documents` prints `Moved a.pdf to Documents/pdf` and exits 0, because renaming a file to its own path succeeds.
+- [x] **No-Op Moves:** Detect when a file is already at its destination. `tidyhome Documents/pdf Documents` prints `Moved a.pdf to Documents/pdf` and exits 0, because renaming a file to its own path succeeds.
 - [ ] **Unknown Entry Kinds:** Stat entries whose kind is `.unknown` instead of skipping them. Filesystems that don't report types from `readdir` (some network filesystems, older XFS) currently move nothing, with no warning.
 - [ ] **Windows Reserved Names:** Handle extensions that map to reserved device names (`x.con`, `x.aux`, `x.nul`, `x.com1`). Windows can't create those directories, so the file fails with an error.
-- [ ] **Destination in Errors:** Name the destination in per-file errors. `error: could not move a.pdf: NotDir` doesn't say which path was blocked.
+- [x] **Destination in Errors:** Name the destination in per-file errors. `error: could not move a.pdf: NotDir` doesn't say which path was blocked.
 
 ## Build & Project
 
