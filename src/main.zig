@@ -61,12 +61,15 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const allocator = init.arena.allocator();
 
+    // Streaming, not positional: positional writers start at offset 0, so
+    // `>> log` would overwrite the log and `> log 2>&1` would interleave
+    // stdout and stderr on top of each other.
     var stdout_buf: [0x200]u8 = undefined;
-    var stdout_writer = Io.File.stdout().writer(io, &stdout_buf);
+    var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buf);
     const stdout = &stdout_writer.interface;
 
     var stderr_buf: [0x200]u8 = undefined;
-    var stderr_writer = Io.File.stderr().writer(io, &stderr_buf);
+    var stderr_writer = Io.File.stderr().writerStreaming(io, &stderr_buf);
     const stderr = &stderr_writer.interface;
 
     const args = try init.minimal.args.toSlice(allocator);
