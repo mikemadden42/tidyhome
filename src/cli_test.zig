@@ -2,6 +2,7 @@
 //! in-process tests in main.zig can't: exit codes and real stdout/stderr.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Io = std.Io;
 const Dir = Io.Dir;
 const build_options = @import("build_options");
@@ -49,7 +50,15 @@ fn readLog(dir: Dir) ![]u8 {
     return dir.readFileAlloc(io, "log.txt", gpa, .limited(4096));
 }
 
+/// On Windows, `std.process.spawn` reopens a `.file` stdio handle instead of
+/// sharing it, so the child's stdout and stderr each start at offset 0. A
+/// shell's `>> log 2>&1` shares one handle, so these tests can't model it.
+fn skipSharedLogOnWindows() !void {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+}
+
 test "exit code 0 and output appends to an existing log" {
+    try skipSharedLogOnWindows();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.createDirPath(io, "src");
@@ -66,6 +75,7 @@ test "exit code 0 and output appends to an existing log" {
 }
 
 test "exit code 1 keeps stdout and stderr intact in a merged log" {
+    try skipSharedLogOnWindows();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.createDirPath(io, "src");
