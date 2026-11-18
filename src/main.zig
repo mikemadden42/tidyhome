@@ -103,6 +103,8 @@ pub fn main(init: std.process.Init) !void {
 
 /// Moves each regular, non-hidden file with an extension in `opts.source_dir`
 /// to `opts.dest_base/<extension>/`. Both paths are resolved relative to `base`.
+/// Files that already exist at the destination, or that are already in their
+/// destination directory, are reported to `out` and left in place.
 /// If the source directory cannot be opened, that is reported to `err_out` and
 /// `error.SourceDirUnavailable` is returned.
 /// A file that cannot be moved is reported to `err_out` and skipped; returns
