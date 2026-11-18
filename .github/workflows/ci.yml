@@ -46,7 +46,7 @@ jobs:
             x86_64-freebsd; do
             zig build -Dtarget="$target" --release=safe -p "zig-out/$target"
           done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: tidyhome
           path: zig-out/*/bin/*
@@ -64,3 +64,4 @@ jobs:
           version: master
       - run: zig build
       - run: zig build test --summary all
+      - run: zig build test --release=safe --summary all
