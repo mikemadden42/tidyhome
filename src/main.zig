@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const Io = std.Io;
 const Dir = Io.Dir;
 
@@ -134,10 +135,21 @@ fn organize(io: Io, allocator: std.mem.Allocator, base: Dir, opts: Options, out:
         _ = file_arena.reset(.retain_capacity);
         const file_allocator = file_arena.allocator();
 
-        if (entry.kind != .file or entry.name[0] == '.') continue;
+        if (entry.name[0] == '.') continue;
 
         const ext = std.fs.path.extension(entry.name);
         if (ext.len <= 1) continue;
+
+        const is_file = isRegularFile(io, dir, entry) catch |err| switch (err) {
+            error.Canceled => |e| return e,
+            else => |e| {
+                try err_out.print("error: could not check {s}: {t}\n", .{ entry.name, e });
+                try err_out.flush();
+                failed += 1;
+                continue;
+            },
+        };
+        if (!is_file) continue;
 
         // Group `B.PDF` with `a.pdf`; only the directory name is lowercased.
         const ext_name = try std.ascii.allocLowerString(file_allocator, ext[1..]);
@@ -198,6 +210,18 @@ fn organizeFile(
         else => |e| return e,
     };
     try out.print("Moved {s} to {s}\n", .{ name, dest_dir });
+}
+
+/// Whether `entry` is a regular file. Some filesystems (some network
+/// filesystems, older XFS) don't report types when listing a directory, so
+/// `.unknown` entries are checked with a stat. Symlinks aren't followed, so
+/// they're skipped either way.
+fn isRegularFile(io: Io, dir: Dir, entry: Dir.Entry) Dir.StatFileError!bool {
+    return switch (entry.kind) {
+        .file => true,
+        .unknown => (try dir.statFile(io, entry.name, .{ .follow_symlinks = false })).kind == .file,
+        else => false,
+    };
 }
 
 /// Whether `sub_path` in `base` resolves to `real_path`. A path that can't be
@@ -499,6 +523,30 @@ test "organize leaves files that are already in their destination directory" {
 
     try expectFileContents(tmp.dir, "out/pdf/a.pdf", "a");
     try expectFileContents(tmp.dir, "out/txt/b.txt", "b");
+}
+
+// No local filesystem reports `.unknown` entries, so build them by hand.
+test "isRegularFile stats entries of unknown kind" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.pdf", .data = "a" });
+    try tmp.dir.createDirPath(io, "subdir.d");
+
+    const unknown = struct {
+        fn entry(name: []const u8) Dir.Entry {
+            return .{ .name = name, .kind = .unknown, .inode = 0 };
+        }
+    }.entry;
+    try std.testing.expect(try isRegularFile(io, tmp.dir, unknown("a.pdf")));
+    try std.testing.expect(!try isRegularFile(io, tmp.dir, unknown("subdir.d")));
+    try std.testing.expectError(error.FileNotFound, isRegularFile(io, tmp.dir, unknown("missing.pdf")));
+
+    // Creating symlinks on Windows needs Developer Mode or admin rights.
+    if (builtin.os.tag != .windows) {
+        try tmp.dir.symLink(io, "a.pdf", "link.pdf", .{});
+        try std.testing.expect(!try isRegularFile(io, tmp.dir, unknown("link.pdf")));
+    }
 }
 
 // The placeholder fallback only runs on filesystems like exFAT, so call it
