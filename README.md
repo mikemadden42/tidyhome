@@ -23,6 +23,14 @@ Use `--` to pass a source directory whose name starts with `-`.
 | 1 | The source directory could not be opened, or at least one file could not be moved |
 | 2 | Invalid arguments |
 
+## Limitations
+
+- **No copying:** files are only renamed, never copied. If `dest_base` is on a different filesystem from `source_dir`, each file fails with `CrossDevice`.
+- **exFAT and FAT32:** these don't support renames that refuse to overwrite, so tidyhome first creates an empty placeholder at the destination, then renames over it. If tidyhome is killed between those two steps, the empty placeholder is left behind, and later runs report that file as already existing. Delete the empty file to move it.
+- **Linux and FreeBSD:** where the filesystem doesn't support renames that refuse to overwrite (always on FreeBSD), files are moved by hard-linking them to the destination and then removing the original. If the removal fails, the file is left in both places.
+- **Extension case:** only ASCII letters are lowercased, so `photo.ÉPS` and `photo.éps` go to different directories.
+- **Windows reserved names:** an extension that is a reserved device name (`con`, `aux`, `nul`, `prn`, `com1`–`com9`, `lpt1`–`lpt9`) can't be a directory name on Windows, so files like `x.con` fail with an error and are left in place.
+
 ## CI
 
 `.github/workflows/ci.yml` runs the tests on Linux, macOS, and Windows and cross-compiles every target below. To run the same checks locally:
