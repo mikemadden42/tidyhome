@@ -14,7 +14,7 @@
 - [x] **macOS No-Replace Fallback:** Catch `error.OperationUnsupported` from `renamePreserve` and fall back to an exclusive-create placeholder + `rename`. On macOS, Zig calls `renameatx_np(RENAME_EXCL)` with no fallback, so on exFAT and FAT32 (confirmed with `hdiutil` disk images) every file failed. Link + unlink isn't an option there: neither filesystem supports hard links.
 - [x] **No-Op Moves:** Detect when a file is already at its destination. `tidyhome Documents/pdf Documents` prints `Moved a.pdf to Documents/pdf` and exits 0, because renaming a file to its own path succeeds.
 - [x] **Unknown Entry Kinds:** Stat entries whose kind is `.unknown` instead of skipping them. Filesystems that don't report types from `readdir` (some network filesystems, older XFS) currently move nothing, with no warning.
-- [ ] **Windows Reserved Names:** Handle extensions that map to reserved device names (`x.con`, `x.aux`, `x.nul`, `x.com1`). Windows can't create those directories, so the file fails with an error.
+- [x] **Windows Reserved Names:** Handle extensions that map to reserved device names (`x.con`, `x.aux`, `x.nul`, `x.com1`). Windows can't create those directories, so the file fails with an error. Documented in the README instead of worked around: the error is already reported, and renaming the directory (e.g. `con_`) would be more surprising.
 - [x] **Destination in Errors:** Name the destination in per-file errors. `error: could not move a.pdf: NotDir` doesn't say which path was blocked.
 
 ## Build & Project
@@ -26,9 +26,9 @@
 - [x] **Document Compound Extensions:** Note in the README that `archive.tar.gz` is sorted by its last extension (`gz/`).
 - [x] **Document Exit Codes:** Add the exit codes to the README: 0 on success, 1 if any file could not be moved (or the source directory can't be opened), 2 for invalid arguments.
 - [x] **Portable Test Paths:** Build expected paths in tests with `std.fs.path.join` (or `sep_str`) instead of hard-coded `/` so `zig build test` passes on Windows and Windows can join the CI test matrix.
-- [ ] **Document Cross-Filesystem Moves:** Note in the README that moves across filesystems fail with `CrossDevice` (no copy fallback), or add a copy + delete fallback.
-- [ ] **Document Link + Unlink Fallback:** Note in the README that on Linux filesystems without `RENAME_NOREPLACE` (and always on FreeBSD), Zig moves by link + unlink and ignores a failed unlink, so a file can be left in both the source and the destination.
-- [ ] **Document ASCII-Only Lowercasing:** Note in the README that only ASCII letters in extensions are lowercased (`allocLowerString`), so `.ÄBC` and `.äbc` land in different directories.
+- [x] **Document Cross-Filesystem Moves:** Note in the README that moves across filesystems fail with `CrossDevice` (no copy fallback), or add a copy + delete fallback.
+- [x] **Document Link + Unlink Fallback:** Note in the README that on Linux filesystems without `RENAME_NOREPLACE` (and always on FreeBSD), Zig moves by link + unlink and ignores a failed unlink, so a file can be left in both the source and the destination.
+- [x] **Document ASCII-Only Lowercasing:** Note in the README that only ASCII letters in extensions are lowercased (`allocLowerString`), so `.ÄBC` and `.äbc` land in different directories.
 - [x] **Exit Code Tests:** Test `main`'s exit codes (0, 1, 2) end to end by running the built binary from `build.zig`, including output sent to a file with stdout and stderr merged, to cover the Streaming Output item.
 
 ## Performance
